@@ -1,0 +1,55 @@
+/ Save attachments + replace inline CID images
+if (inputData.saveAttachments && emailData.hasAttachments) {
+
+    let attachmentsResponse = await client
+        .api(`/users/${userEmail}/messages/${emailData.id}/attachments`)
+        .get();
+
+    emailFields.attachments = [];
+
+    // Loop through attachments
+    for (const att of attachmentsResponse.value) {
+
+        // Inline image (cid)
+        if (att.isInline && att.contentId && att.contentBytes) {
+
+            // Create Base64 data URI
+            const dataUri = `data:${att.contentType};base64,${att.contentBytes}`;
+
+            // Replace cid:xxxxx inside HTML body
+            if (emailFields.email_message_html) {
+                emailFields.email_message_html =
+                    emailFields.email_message_html.replace(
+                        new RegExp(`cid:${att.contentId}`, "g"),
+                        dataUri
+                    );
+            }
+
+            // Still push to attachments list (optional)
+            const buffer = Buffer.from(att.contentBytes, 'base64');
+            emailFields.attachments.push({
+                category: constants.contentCategory.Inbound,
+                file_name: att.name,
+                content: buffer,
+                content_type: att.contentType
+            });
+
+        } else if (att['@odata.mediaContentType'] && att.contentBytes) {
+
+            // Normal attachment
+            const buffer = Buffer.from(att.contentBytes, 'base64');
+
+            emailFields.attachments.push({
+                category: constants.contentCategory.Inbound,
+                file_name: att.name,
+                content: buffer,
+                content_type: att.contentType
+            });
+
+        } else {
+
+            console.warn(`Skipped unsupported attachment: ${att.name}`);
+
+        }
+    }
+}
