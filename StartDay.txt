@@ -1,0 +1,87 @@
+async function getTodaysEmailCount() {
+
+    try {
+
+        // 2. Calculate "Start of Today" (Midnight Local Time)
+
+        const startOfDay = new Date();
+
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const filterDate = startOfDay.toISOString();
+
+ 
+
+        console.log(`Counting emails received since: ${startOfDay.toLocaleString()} (Local Time)\n`);
+
+ 
+
+        // 3. Get all Mail Folders (Top level)
+
+        // Adjust 'top' if you have more than 50 folders
+
+        const foldersResponse = await client.api('/me/mailFolders')
+
+            .select('id,displayName')
+
+            .top(50)
+
+            .get();
+
+ 
+
+        const folders = foldersResponse.value;
+
+ 
+
+        // 4. Iterate through each folder and count messages
+
+        console.log("Folder Name             | Today's Count");
+
+        console.log("---------------------------------------");
+
+ 
+
+        for (const folder of folders) {
+
+            const countResponse = await client.api(`/me/mailFolders/${folder.id}/messages`)
+
+                // Filter: Received greater than or equal to (ge) today's start date
+
+                .filter(`receivedDateTime ge ${filterDate}`)
+
+                // Count=true gives us the number without downloading all the actual message bodies
+
+                .count(true)
+
+                // Top=0 optimizes performance (we only want the count, not the message data)
+
+                .top(0)
+
+                .get();
+
+ 
+
+            // The count is returned in the '@odata.count' property
+
+            const count = countResponse['@odata.count'];
+
+ 
+
+            // Simple formatting for the table
+
+            const padding = "                        ".substring(0, 24 - folder.displayName.length);
+
+            console.log(`${folder.displayName}${padding}| ${count}`);
+
+        }
+
+ 
+
+    } catch (error) {
+
+        console.error("Error fetching data:", error);
+
+    }
+
+}
