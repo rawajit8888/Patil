@@ -1,0 +1,145 @@
+async syncInboxWithDelta(client, lastDeltaLink, mailFolder, userEmail) {
+
+    // 1. Construct the starting URL
+
+    let requestPath = lastDeltaLink
+
+        ? lastDeltaLink
+
+        : `/users/${userEmail}/mailFolders/${mailFolder.id}/messages/delta`;
+
+ 
+
+    let newDeltaLink = null;
+
+    let allMessages = [];
+
+   
+
+    // Safety Break
+
+    let pageCount = 0;
+
+    const MAX_PAGES = 50;
+
+ 
+
+    console.log(`Starting sync for ${userEmail}...`);
+
+ 
+
+    while (pageCount < MAX_PAGES) {
+
+        pageCount++;
+
+ 
+
+        try {
+
+            // 2. Make the Request
+
+            // CRITICAL CHANGE: We combine both preferences into one header string.
+
+            // - IdType="ImmutableId": Ensures the ID doesn't change if email is moved.
+
+            // - odata.maxpagesize=50: Requests 50 items per page (up from default 10).
+
+            let request = client.api(requestPath)
+
+                                .header("Prefer", 'IdType="ImmutableId",odata.maxpagesize=50');
+
+ 
+
+            // Only apply select on the VERY FIRST request if it's NOT a delta link.
+
+            // (Once you have a nextLink/deltaLink, parameters are embedded in the string).
+
+            if (!lastDeltaLink && pageCount === 1 && !requestPath.startsWith("http")) {
+
+                // ADDED: conversationId and internetMessageId for threading support
+
+                request = request.select("subject,receivedDateTime,from,isRead,id,conversationId,internetMessageId,hasAttachments,body");
+
+            }
+
+ 
+
+            const response = await request.get();
+
+ 
+
+            // 3. Collect Messages
+
+            if (response.value && response.value.length > 0) {
+
+                allMessages.push(...response.value);
+
+            }
+
+ 
+
+            // 4. Handle Pagination (Next Link)
+
+            if (response["@odata.nextLink"]) {
+
+                requestPath = response["@odata.nextLink"];
+
+                continue;
+
+            }
+
+ 
+
+            // 5. Handle Completion (Delta Link)
+
+            if (response["@odata.deltaLink"]) {
+
+                newDeltaLink = response["@odata.deltaLink"];
+
+                console.log(`Sync Complete. Fetched ${allMessages.length} changes.`);
+
+                break;
+
+            }
+
+ 
+
+            // If we get here, the API gave no links. Treat as finished.
+
+            break;
+
+ 
+
+        } catch (error) {
+
+            console.error(`Error during sync page ${pageCount}:`, error.message);
+
+            throw error;
+
+        }
+
+    }
+
+ 
+
+    // 6. Fail-Safe
+
+    if (!newDeltaLink) {
+
+        console.warn("Returning old delta link to maintain state.");
+
+        newDeltaLink = lastDeltaLink;
+
+    }
+
+ 
+
+    return {
+
+        messages: allMessages,
+
+        deltaLink: newDeltaLink
+
+    };
+
+}

@@ -1,0 +1,393 @@
+// Destructure the result from your sync function
+
+let [newMessages, newDeltaLink] = emails;
+
+ 
+
+if (newMessages && newMessages.length > 0) {
+
+   
+
+    // Sort by Date (Oldest to Newest) to ensure we process in order
+
+    // This effectively replaces your manual 'lastId' checks.
+
+    newMessages.sort((a, b) => new Date(a.receivedDateTime) - new Date(b.receivedDateTime));
+
+ 
+
+    for (let emailData of newMessages) {
+
+       
+
+        // 1. CRITICAL: Skip "Deleted" notifications from Delta API
+
+        // If you don't do this, 'emailData.body' will be undefined -> CRASH
+
+        if (emailData['@removed']) {
+
+            console.log(`Skipping deleted email: ${emailData.id}`);
+
+            continue;
+
+        }
+
+ 
+
+        // 2. Prepare the basic email object
+
+        let emailFields = {
+
+            sender: emailData.from?.emailAddress?.address || "Unknown",
+
+            cc_email: (emailData.ccRecipients || []).map(e => e.emailAddress.address).join(','),
+
+            bcc_email: (emailData.bccRecipients || []).map(e => e.emailAddress.address).join(','),
+
+            message_uid: emailData.id,
+
+            subject: emailData.subject || "",
+
+            // Use safe navigation (?.) in case body is missing
+
+            email_message_html: emailData.body?.content || "",
+
+            received_date: new Date(emailData.receivedDateTime).getTime()
+
+        };
+
+ 
+
+        // Convert HTML to Text safely
+
+        emailFields.email_message = htmlToText(emailFields.email_message_html, { wordwrap: 130 });
+
+        emailFields.email_message_text_editor = emailFields.email_message_html; // Copy for editing
+
+ 
+
+        // 3. Domain Filter (Your specific bank logic)
+
+        // Ensure sender exists before splitting
+
+        if (emailFields.sender && emailFields.sender.split('@')[1] === "mahabank.co.in") {
+
+ 
+
+            // 4. Check for Auto-Replies / Failure messages
+
+            const ignoreSubjects = ["Automatic reply:", "DELIVERY FAILURE", "Undeliverable", "System Exception"];
+
+            const isIgnored = ignoreSubjects.some(sub => emailFields.subject.includes(sub));
+
+ 
+
+            if (!isIgnored) {
+
+ 
+
+                // 5. Handle Attachments (Only if enabled and present)
+
+                emailFields.attachments = [];
+
+                if (inputData.saveAttachments && emailData.hasAttachments) {
+
+                    try {
+
+                        let attachmentsResponse = await client
+
+                            .api(`/users/${userEmail}/messages/${emailData.id}/attachments`)
+
+                            .get();
+
+ 
+
+                        for (const att of attachmentsResponse.value) {
+
+                            // Logic: If inline image, replace CID in HTML. Always add to attachment list.
+
+                           
+
+                            // A. Handle Inline Replacement
+
+                            if (att.isInline && att.contentId && att.contentBytes) {
+
+                                const dataUri = `data:${att.contentType};base64,${att.contentBytes}`;
+
+                                // Robust Regex to catch cid:ID, cid:<ID>, etc.
+
+                                const cidRegex = new RegExp(`cid:?<?${att.contentId}>?`, 'gi');
+
+                                emailFields.email_message_text_editor = emailFields.email_message_text_editor.replace(cidRegex, dataUri);
+
+                            }
+
+ 
+
+                            // B. Add to Attachment Array
+
+                            if (att.contentBytes) {
+
+                                emailFields.attachments.push({
+
+                                    category: constants.contentCategory.Inbound,
+
+                                    file_name: att.name,
+
+                                    content: Buffer.from(att.contentBytes, 'base64'),
+
+                                    content_type: att.contentType
+
+                                });
+
+                            }
+
+                        }
+
+                    } catch (attError) {
+
+                        console.error(`Failed to fetch attachments for ${emailData.id}:`, attError.message);
+
+                        // Decide: Do you want to continue processing the email without attachments?
+
+                        // If so, just log. If not, 'continue' loop.
+
+                    }
+
+                }
+
+ 
+
+                // 6. Execute Business Logic (Create Instance)
+
+                let rslt = await self.createInstance(emailFields);
+
+               
+
+                if (rslt.rc != 0) {
+
+                    console.error(`Failed to create instance for ${emailFields.message_uid}`);
+
+                    return rslt; // Or continue?
+
+                }
+
+ 
+
+                console.debug(`${automationKey} - Processed mail from ${emailFields.sender}`);
+
+ 
+
+                // 7. Update Marker AFTER success
+
+                // This ensures if createInstance fails, we retry this email next time (requires transaction handling ideally)
+
+                await markerService.updateValue(automationKey, emailFields.message_uid);
+
+                await markerService.updateValue(last_message_time_key, emailData.receivedDateTime);
+
+            }
+
+        }
+
+    }
+
+} else {
+
+    // No new emails
+
+    console.log("No new email found!");
+
+    const now = new Date();
+
+    // Assuming 'lastId_timestamp' is available in scope from your markerService
+
+    if (lastId_timestamp) {
+
+        const inputTime = new Date(lastId_timestamp);
+
+        if ((now - inputTime) > (30 * 60 * 1000)) {
+
+            console.error("No New emails found in past 30 mins.");
+
+        }
+
+    }
+
+}
+
+ 
+
+// 8. IMPORTANT: Save the New Delta Link
+
+if (newDeltaLink) {
+
+    // You named this "next_link" in your code, but it's really the delta link for FUTURE syncs.
+
+    await self.nextLink(newDeltaLink, "UPDATE");
+
+}
+
+ 
+
+​​Thanks & Regards,
+Vaibhav Chavan
+Feat Systems Private Limited         
++91 22 28702221 | +91 7977295372 / 9833864385
+vaibhav@featsystems.com
+www.featsystems.com | www.amazingrpa.in
+
+ 
+
+From: Vaibhav <vaibhav@featsystems.com>
+Sent: 30 December 2025 11:36 AM
+To: 'Ashish Patil' <ashish.patil@featsystems.com>
+Subject: RE: ReadMSEmail File
+
+ 
+
+async syncInboxWithDelta(client, lastDeltaLink, mailFolder, userEmail) {
+
+    // 1. Construct the starting URL
+
+    let requestPath = lastDeltaLink
+
+        ? lastDeltaLink
+
+        : `/users/${userEmail}/mailFolders/${mailFolder.id}/messages/delta`;
+
+ 
+
+    let newDeltaLink = null;
+
+    let allMessages = [];
+
+   
+
+    // Safety Break
+
+    let pageCount = 0;
+
+    const MAX_PAGES = 50;
+
+ 
+
+    console.log(`Starting sync for ${userEmail}...`);
+
+ 
+
+    while (pageCount < MAX_PAGES) {
+
+        pageCount++;
+
+ 
+
+        try {
+
+            // 2. Make the Request
+
+            // CRITICAL CHANGE: We combine both preferences into one header string.
+
+            // - IdType="ImmutableId": Ensures the ID doesn't change if email is moved.
+
+            // - odata.maxpagesize=50: Requests 50 items per page (up from default 10).
+
+            let request = client.api(requestPath)
+
+                                .header("Prefer", 'IdType="ImmutableId",odata.maxpagesize=50');
+
+ 
+
+            // Only apply select on the VERY FIRST request if it's NOT a delta link.
+
+            // (Once you have a nextLink/deltaLink, parameters are embedded in the string).
+
+            if (!lastDeltaLink && pageCount === 1 && !requestPath.startsWith("http")) {
+
+                // ADDED: conversationId and internetMessageId for threading support
+
+                request = request.select("subject,receivedDateTime,from,isRead,id,conversationId,internetMessageId,hasAttachments,body");
+
+            }
+
+ 
+
+            const response = await request.get();
+
+ 
+
+            // 3. Collect Messages
+
+            if (response.value && response.value.length > 0) {
+
+                allMessages.push(...response.value);
+
+            }
+
+ 
+
+            // 4. Handle Pagination (Next Link)
+
+            if (response["@odata.nextLink"]) {
+
+                requestPath = response["@odata.nextLink"];
+
+                continue;
+
+            }
+
+ 
+
+            // 5. Handle Completion (Delta Link)
+
+            if (response["@odata.deltaLink"]) {
+
+                newDeltaLink = response["@odata.deltaLink"];
+
+                console.log(`Sync Complete. Fetched ${allMessages.length} changes.`);
+
+                break;
+
+            }
+
+ 
+
+            // If we get here, the API gave no links. Treat as finished.
+
+            break;
+
+ 
+
+        } catch (error) {
+
+            console.error(`Error during sync page ${pageCount}:`, error.message);
+
+            throw error;
+
+        }
+
+    }
+
+ 
+
+    // 6. Fail-Safe
+
+    if (!newDeltaLink) {
+
+        console.warn("Returning old delta link to maintain state.");
+
+        newDeltaLink = lastDeltaLink;
+
+    }
+
+ 
+
+    return {
+
+        messages: allMessages,
+
+        deltaLink: newDeltaLink
+
+    };
+
+}
