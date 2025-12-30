@@ -1,0 +1,55 @@
+async function getTotalEmailCount() {
+    try {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        const filterDate = startOfDay.toISOString();
+
+        console.log(`Counting emails received since: ${startOfDay.toLocaleString()} (Local Time)\n`);
+        console.log("Folder Name             | Today's Count");
+        console.log("---------------------------------------");
+
+        // 1. Get Standard Folders (Inbox, Deleted Items, etc.)
+        const foldersResponse = await client.api('/me/mailFolders')
+            .select('id,displayName')
+            .top(50)
+            .get();
+
+        let totalReceivedToday = 0;
+
+        // Helper function to count messages in a specific folder ID
+        const countInFolder = async (folderId, folderName) => {
+            try {
+                const res = await client.api(`/me/mailFolders/${folderId}/messages`)
+                    .filter(`receivedDateTime ge ${filterDate}`)
+                    .count(true)
+                    .top(0)
+                    .get();
+                
+                const count = res['@odata.count'];
+                totalReceivedToday += count;
+                
+                const padding = "                        ".substring(0, 24 - folderName.length);
+                console.log(`${folderName}${padding}| ${count}`);
+            } catch (e) {
+                // Squelch errors for folders that might not exist or have access issues
+            }
+        };
+
+        // Loop through standard folders
+        for (const folder of foldersResponse.value) {
+            await countInFolder(folder.id, folder.displayName);
+        }
+
+        // 2. EXPLICITLY check the hidden 'Recoverable Items' (Hard Deleted)
+        // This is where Shift+Deleted items go.
+        await countInFolder('recoverableitemsdeletions', 'Recoverable Items (Hidden)');
+
+        console.log("---------------------------------------");
+        console.log(`TOTAL Received Today    | ${totalReceivedToday}`);
+
+    } catch (error) {
+        console.error("Error:", error);
+    }
+}
+
+getTotalEmailCount();
