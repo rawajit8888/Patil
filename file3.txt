@@ -1,0 +1,171 @@
+async syncInboxWithDelta(client, lastDeltaLink, mailFolder, userEmail) {
+
+    // 1. Construct the starting URL
+
+    let requestPath = lastDeltaLink
+
+        ? lastDeltaLink
+
+        : `/users/${userEmail}/mailFolders/${mailFolder.id}/messages/delta`;
+
+ 
+
+    let newDeltaLink = null;
+
+    let allMessages = [];
+
+   
+
+    // Safety Break
+
+    let pageCount = 0;
+
+    const MAX_PAGES = 50;
+
+ 
+
+    // --- NEW: Calculate "Today 12:00 AM" Timestamp ---
+
+    const startOfToday = new Date();
+
+    startOfToday.setHours(0, 0, 0, 0); // Set to 00:00:00.000 local time
+
+    // If you need UTC 00:00, use: startOfToday.setUTCHours(0,0,0,0);
+
+ 
+
+    console.log(`Starting sync for ${userEmail} (Filter: Read & >= ${startOfToday.toISOString()})...`);
+
+ 
+
+    while (pageCount < MAX_PAGES) {
+
+        pageCount++;
+
+ 
+
+        try {
+
+            // 2. Make the Request
+
+            // Note: We do NOT add $filter here. We fetch changes and filter in memory.
+
+            let request = client.api(requestPath)
+
+                                .header("Prefer", 'IdType="ImmutableId",odata.maxpagesize=50');
+
+ 
+
+            // Only apply select on the FIRST request if strict URL
+
+            if (!lastDeltaLink && pageCount === 1 && !requestPath.startsWith("http")) {
+
+                request = request.select("subject,receivedDateTime,from,isRead,id,conversationId,internetMessageId,hasAttachments,body");
+
+            }
+
+ 
+
+            const response = await request.get();
+
+ 
+
+            // 3. Collect & FILTER Messages
+
+            if (response.value && response.value.length > 0) {
+
+               
+
+                // --- NEW: Apply Logic Filter Here ---
+
+                const validEmails = response.value.filter(msg => {
+
+                    // A. Skip "Removed" notifications
+
+                    if (msg['@removed']) return false;
+
+ 
+
+                    // B. Check Read Status
+
+                    if (msg.isRead !== true) return false;
+
+ 
+
+                    // C. Check Time (Today 12 AM onwards)
+
+                    const msgTime = new Date(msg.receivedDateTime);
+
+                    if (msgTime < startOfToday) return false;
+
+ 
+
+                    return true;
+
+                });
+
+ 
+
+                allMessages.push(...validEmails);
+
+            }
+
+ 
+
+            // 4. Handle Pagination
+
+            if (response["@odata.nextLink"]) {
+
+                requestPath = response["@odata.nextLink"];
+
+                continue;
+
+            }
+
+ 
+
+            // 5. Handle Completion
+
+            if (response["@odata.deltaLink"]) {
+
+                newDeltaLink = response["@odata.deltaLink"];
+
+                break;
+
+            }
+
+            break;
+
+ 
+
+        } catch (error) {
+
+            console.error(`Error during sync page ${pageCount}:`, error.message);
+
+            throw error;
+
+        }
+
+    }
+
+ 
+
+    if (!newDeltaLink) {
+
+        newDeltaLink = lastDeltaLink;
+
+    }
+
+ 
+
+    return {
+
+        messages: allMessages,
+
+        deltaLink: newDeltaLink
+
+    };
+
+}
+
+ 
