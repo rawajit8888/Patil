@@ -1,0 +1,47 @@
+async function bulkInsertEmails(emailsArray) {
+    try {
+        // 1. Connect to SQL
+        let pool = await sql.connect(config);
+
+        // 2. Create a TVP (Table-Valued Parameter) object
+        // The name inside new sql.Table() doesn't strictly matter, 
+        // but the COLUMNS must match your SQL Type EXACTLY.
+        const tvp = new sql.Table('EmailTableType');
+        // Define columns (Must match the SQL CREATE TYPE order and types)
+        tvp.columns.add('ImmutableId', sql.NVarChar(255));
+
+        // 3. Populate the TVP with data
+        // Assuming 'emailsArray' is the list of objects from your Graph API call
+        emailsArray.forEach(email => {
+            tvp.rows.add(
+                email.id, // Maps to ImmutableId
+            );
+        });
+
+        console.log(`Preparing to insert ${tvp.rows.length} rows...`);
+
+        // 4. Execute the Stored Procedure
+        const request = pool.request();
+        
+        // Bind the TVP to the parameter name '@EmailData' defined in the SP
+        request.input('EmailData', tvp);
+
+        const result = await request.execute('usp_BulkInsertEmails');
+
+        console.log(`Success! Rows affected: ${result.rowsAffected[0]}`);
+
+    } catch (err) {
+        console.error(" SQL Error:", err);
+    } finally {
+        // Close connection
+        sql.close();
+    }
+}
+
+
+
+Execute it in SSMS
+Select A.
+From Emails_IM_Ids A With(NOLOCK)
+LEFT JOIN QMS_SKIPPED_EMAIL_NEW B With(NOLOCK) ON A.ImmutableId = B.message_id
+Where B.message_id IS NULL
