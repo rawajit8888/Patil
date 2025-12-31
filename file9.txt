@@ -1,0 +1,30 @@
+async function getUniqueIdsSimple(client) {
+    // 1. Setup Date Filter
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const filterDate = startOfDay.toISOString();
+
+    console.log("Fetching Immutable IDs...");
+
+    // 2. Fetch IDs from Inbox
+    // We only select 'id' to keep it fast
+    const response = await client.api(`/users/digitalsupport@mahabank.co.in/mailFolders/Inbox/messages`)
+        .filter(`receivedDateTime ge ${filterDate}`)
+        .select('id') 
+        .header("Prefer", 'IdType="ImmutableId"') // CRITICAL: Forces Immutable IDs
+        .top(1000)
+        .get();
+
+    // 3. THE "MAGIC" LINE (Deduplication)
+    // We map to just the ID strings, then put them in a Set (which removes duplicates instantly)
+    const uniqueIds = [...new Set(response.value.map(item => item.id))];
+
+    // 4. Output
+    console.log(`Raw count from API:    ${response.value.length}`);
+    console.log(`Unique Immutable IDs:  ${uniqueIds.length}`);
+    
+    // This 'uniqueIds' array is now ready to be used
+    console.log(uniqueIds); 
+    
+    return uniqueIds;
+}
