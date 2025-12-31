@@ -1,0 +1,37 @@
+async function getEmailTypes(client) {
+    const filterDate = new Date();
+    filterDate.setHours(0,0,0,0);
+    const filterString = filterDate.toISOString();
+
+    console.log("Fetching emails with Message Class classification...");
+
+    try {
+        const response = await client.api('/users/digitalsupport@mahabank.co.in/mailFolders/Inbox/messages')
+            .filter(`receivedDateTime ge ${filterString}`)
+            // FIX: Use PLURAL 'singleValueExtendedProperties'
+            .expand("singleValueExtendedProperties($filter=id eq 'String 0x001a')")
+            // Note: When using expand, you usually don't need to 'select' the extended property explicitly
+            .select('id,subject,receivedDateTime') 
+            .header("Prefer", 'IdType="ImmutableId"')
+            .top(1000)
+            .get();
+
+        const emails = response.value;
+
+        // DEBUG: Print total count
+        console.log(`Total Items Found: ${emails.length}`);
+
+        emails.forEach(email => {
+            // FIX: Access the PLURAL property in the response
+            const props = email.singleValueExtendedProperties;
+            const msgClass = (props && props.length > 0) ? props[0].value : "IPM.Note";
+
+            if (msgClass !== 'IPM.Note') {
+                console.log(`[Non-Standard] Class: ${msgClass} | Subject: ${email.subject}`);
+            }
+        });
+
+    } catch (error) {
+        console.error("Error fetching data:", error.message);
+    }
+}
