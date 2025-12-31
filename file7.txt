@@ -1,0 +1,61 @@
+async function getEmailTypes(client, inputData) {
+    const filterDate = new Date();
+    filterDate.setHours(0,0,0,0);
+    const filterString = filterDate.toISOString();
+
+    console.log("Fetching emails with Message Class classification...");
+
+    // 1. Fetch Inbox with the "MessageClass" Extended Property
+    const response = await client.api('/users/digitalsupport@mahabank.co.in/mailFolders/Inbox/messages')
+        .filter(`receivedDateTime ge ${filterString}`)
+        // EXPAND: This gets the hidden 'PR_MESSAGE_CLASS' property (0x001a)
+        .expand("singleValueLegacyExtendedProperty($filter=id eq 'String 0x001a')")
+        .select('id,subject,receivedDateTime') 
+        .header("Prefer", 'IdType="ImmutableId"')
+        .top(1000)
+        .get();
+
+    const emails = response.value;
+    
+    // 2. Tally the counts by Type
+    let stats = {
+        "Standard Emails": 0,
+        "Undeliverable (NDR)": 0,
+        "Read Receipts": 0,
+        "Meeting Invites": 0,
+        "Other/Hidden": 0
+    };
+
+    console.log("\n--- Non-Standard Emails Found ---");
+
+    emails.forEach(email => {
+        // Extract the Message Class from the extended properties array
+        let msgClass = "Unknown";
+        if (email.singleValueLegacyExtendedProperty && email.singleValueLegacyExtendedProperty.length > 0) {
+            msgClass = email.singleValueLegacyExtendedProperty[0].value;
+        }
+
+        // Categorize
+        if (msgClass === 'IPM.Note') {
+            stats["Standard Emails"]++;
+        } 
+        else if (msgClass.includes('.NDR')) {
+            stats["Undeliverable (NDR)"]++;
+            console.log(`[NDR] ${email.subject} (ID: ${email.id.substring(0,15)}...)`);
+        }
+        else if (msgClass.includes('.IPNRN') || msgClass.includes('.IPNNRN')) {
+            stats["Read Receipts"]++;
+            console.log(`[Receipt] ${email.subject}`);
+        }
+        else if (msgClass.includes('IPM.Schedule')) {
+            stats["Meeting Invites"]++;
+        }
+        else {
+            stats["Other/Hidden"]++;
+            console.log(`[Hidden/Other] Class: ${msgClass} | Subject: ${email.subject}`);
+        }
+    });
+
+    console.log("\n--- Final Counts ---");
+    console.table(stats);
+}
