@@ -1,0 +1,61 @@
+const _ = require('lodash'); // Optional: used for escaping regex characters if you have it, otherwise use the helper below
+
+// Helper to escape special regex characters (if you don't use lodash)
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
+}
+
+// ... inside your attachment loop ...
+
+if (att.isInline && att.contentId && att.contentBytes) {
+
+    // 1. Prepare the Data URI
+    // Ensure contentType is valid; fallback to image/png if missing to prevent broken images
+    const contentType = att.contentType || 'image/png';
+    const dataUri = `data:${contentType};base64,${att.contentBytes}`;
+
+    // 2. Perform Replacement in HTML Body
+    if (emailFields.email_message_text_editor) {
+        
+        // CLEANUP: Clean the Content ID (remove < > if present in the API response)
+        const rawCid = att.contentId.replace(/^<|>$/g, '');
+        
+        // ESCAPE: Escape the ID so it doesn't break the Regex (e.g. if ID has dots or pluses)
+        const escapedCid = escapeRegExp(rawCid);
+
+        // PATTERN: Create a Regex that handles:
+        // 1. Optional 'cid:' prefix variation
+        // 2. Optional angle brackets in the HTML source (< >)
+        // 3. URL Encoded characters (like %40 instead of @)
+        // We match broadly to catch "cid:ID" or "cid:<ID>"
+        const cidRegex = new RegExp(`cid:(<)?${escapedCid}(>)?`, 'gi');
+
+        // Execute Replace
+        emailFields.email_message_text_editor = emailFields.email_message_text_editor.replace(cidRegex, (match) => {
+            return dataUri; 
+        });
+
+        // 3. HANDLE URL ENCODED MISMATCH (The most common failure point)
+        // Sometimes HTML has "cid:foo%40bar.com" but API gives "foo@bar.com"
+        // We check if the ID contains chars that might be encoded
+        if (rawCid.includes('@') || rawCid.includes('+')) {
+            const encodedCid = encodeURIComponent(rawCid);
+            if (encodedCid !== rawCid) {
+                 const encodedRegex = new RegExp(`cid:(<)?${escapeRegExp(encodedCid)}(>)?`, 'gi');
+                 emailFields.email_message_text_editor = emailFields.email_message_text_editor.replace(encodedRegex, dataUri);
+            }
+        }
+    }
+
+    // 3. Push to attachments list (Standard logic)
+    // Note: Some editors hide the attachment if it is also inline. 
+    // You might want to flag it as 'hidden' or 'inline' depending on your UI needs.
+    const buffer = Buffer.from(att.contentBytes, 'base64');
+    emailFields.attachments.push({
+        category: constants.contentCategory.Inbound,
+        file_name: att.name,
+        content: buffer,
+        content_type: att.contentType,
+        is_inline: true // Useful flag for your frontend to hide it from the "Download Attachments" list
+    });
+}
