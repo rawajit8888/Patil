@@ -1,0 +1,20 @@
+import similarity from 'text-similarity-node';
+
+const existing = [
+  "Debit Card -> Block Card",
+  "Credit Card -> Close Card",
+];
+
+function findClosest(input) {
+  let best = null, bestScore = 0;
+  for (let label of existing) {
+    const score = similarity.similarity.jaroWinkler(input, label);
+    if (score > bestScore) {
+      best = label;
+      bestScore = score;
+    }
+  }
+  return { best, bestScore };
+}
+
+console.log(findClosest("Debit Card -> Deactivate Card"));
